@@ -222,7 +222,11 @@ void TrajectoryGenerator::checkGoalConstraints(
   }
 
   const moveit_msgs::msg::Constraints& goal_con{ goal_constraints.front() };
-  if (!isOnlyOneGoalTypeGiven(goal_con))
+  const bool has_joint_goal = !goal_con.joint_constraints.empty();
+  const bool has_cartesian_metadata = goal_con.position_constraints.size() == 1 && goal_con.orientation_constraints.empty();
+  const bool allow_joint_goal_with_position_metadata = has_joint_goal && has_cartesian_metadata;
+
+  if (!isOnlyOneGoalTypeGiven(goal_con) && !allow_joint_goal_with_position_metadata)
   {
     throw OnlyOneGoalTypeAllowed("Only cartesian XOR joint goal allowed");
   }
@@ -230,6 +234,12 @@ void TrajectoryGenerator::checkGoalConstraints(
   if (isJointGoalGiven(goal_con))
   {
     checkJointGoalConstraint(goal_con, group_name);
+
+    if (allow_joint_goal_with_position_metadata &&
+        goal_con.position_constraints.front().constraint_region.primitive_poses.empty())
+    {
+      throw NoPrimitivePoseGiven("Primitive pose in position constraints of goal missing");
+    }
   }
   else
   {

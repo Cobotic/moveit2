@@ -57,6 +57,51 @@
 
 namespace pilz_industrial_motion_planner
 {
+void setSamplePoseTipToTrackedTransform(const Eigen::Isometry3d& tip_to_tracked);
+void clearSamplePoseTipToTrackedTransform();
+
+namespace
+{
+bool extractTipToTrackedTransform(const planning_interface::MotionPlanRequest& req, Eigen::Isometry3d& tip_to_tracked)
+{
+  tip_to_tracked = Eigen::Isometry3d::Identity();
+
+  if (req.goal_constraints.empty())
+  {
+    return false;
+  }
+
+  const auto& goal_constraint = req.goal_constraints.front();
+  if (goal_constraint.joint_constraints.empty() || goal_constraint.position_constraints.empty())
+  {
+    return false;
+  }
+
+  const auto& metadata_constraint = goal_constraint.position_constraints.front();
+  if (metadata_constraint.constraint_region.primitive_poses.empty())
+  {
+    return false;
+  }
+
+  tf2::fromMsg(metadata_constraint.constraint_region.primitive_poses.front(), tip_to_tracked);
+  return true;
+}
+
+class SamplePoseOffsetGuard
+{
+public:
+  explicit SamplePoseOffsetGuard(const Eigen::Isometry3d& tip_to_tracked)
+  {
+    setSamplePoseTipToTrackedTransform(tip_to_tracked);
+  }
+
+  ~SamplePoseOffsetGuard()
+  {
+    clearSamplePoseTipToTrackedTransform();
+  }
+};
+}  // namespace
+
 static const rclcpp::Logger LOGGER =
     rclcpp::get_logger("moveit.pilz_industrial_motion_planner.trajectory_generator_lin");
 TrajectoryGeneratorLIN::TrajectoryGeneratorLIN(const moveit::core::RobotModelConstPtr& robot_model,
@@ -101,6 +146,12 @@ void TrajectoryGeneratorLIN::extractMotionPlanInfo(const planning_scene::Plannin
     }
 
     computeLinkFK(robot_state, info.link_name, info.goal_joint_position, info.goal_pose);
+
+    Eigen::Isometry3d tip_to_tracked;
+    if (extractTipToTrackedTransform(req, tip_to_tracked))
+    {
+      info.goal_pose = info.goal_pose * tip_to_tracked;
+    }
   }
   // goal given in Cartesian space
   else
@@ -138,6 +189,12 @@ void TrajectoryGeneratorLIN::extractMotionPlanInfo(const planning_scene::Plannin
   // Ignored return value because at this point the function should always
   // return 'true'.
   computeLinkFK(robot_state, info.link_name, info.start_joint_position, info.start_pose);
+
+  Eigen::Isometry3d tip_to_tracked;
+  if (!req.goal_constraints.front().joint_constraints.empty() && extractTipToTrackedTransform(req, tip_to_tracked))
+  {
+    info.start_pose = info.start_pose * tip_to_tracked;
+  }
 }
 
 void TrajectoryGeneratorLIN::plan(const planning_scene::PlanningSceneConstPtr& scene,
@@ -160,6 +217,22 @@ void TrajectoryGeneratorLIN::plan(const planning_scene::PlanningSceneConstPtr& s
   moveit_msgs::msg::MoveItErrorCodes error_code;
   // sample the Cartesian trajectory and compute joint trajectory using inverse
   // kinematics
+  Eigen::Isometry3d tip_to_tracked;
+  const bool use_tracked_frame = extractTipToTrackedTransform(req, tip_to_tracked);
+  if (use_tracked_frame)
+  {
+    SamplePoseOffsetGuard sample_pose_offset_guard(tip_to_tracked);
+    if (!generateJointTrajectory(scene, planner_limits_.getJointLimitContainer(), cart_trajectory, plan_info.group_name,
+                                 plan_info.link_name, plan_info.start_joint_position, sampling_time, joint_trajectory,
+                                 error_code))
+    {
+      std::ostringstream os;
+      os << "Failed to generate valid joint trajectory from the Cartesian path";
+      throw LinTrajectoryConversionFailure(os.str(), error_code.val);
+    }
+    return;
+  }
+
   if (!generateJointTrajectory(scene, planner_limits_.getJointLimitContainer(), cart_trajectory, plan_info.group_name,
                                plan_info.link_name, plan_info.start_joint_position, sampling_time, joint_trajectory,
                                error_code))

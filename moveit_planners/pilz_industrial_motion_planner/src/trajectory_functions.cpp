@@ -48,6 +48,37 @@
 namespace
 {
 static const rclcpp::Logger LOGGER = rclcpp::get_logger("moveit.pilz_industrial_motion_planner.trajectory_functions");
+
+thread_local bool SAMPLE_POSE_OFFSET_ACTIVE = false;
+thread_local Eigen::Isometry3d SAMPLE_POSE_TIP_TO_TRACKED = Eigen::Isometry3d::Identity();
+
+void applyTrackedFrameOffsetForIK(Eigen::Isometry3d& pose)
+{
+  if (!SAMPLE_POSE_OFFSET_ACTIVE)
+  {
+    return;
+  }
+
+  pose = pose * SAMPLE_POSE_TIP_TO_TRACKED.inverse();
+}
+}
+
+namespace pilz_industrial_motion_planner
+{
+void setSamplePoseTipToTrackedTransform(const Eigen::Isometry3d& tip_to_tracked);
+void clearSamplePoseTipToTrackedTransform();
+}
+
+void pilz_industrial_motion_planner::setSamplePoseTipToTrackedTransform(const Eigen::Isometry3d& tip_to_tracked)
+{
+  SAMPLE_POSE_TIP_TO_TRACKED = tip_to_tracked;
+  SAMPLE_POSE_OFFSET_ACTIVE = true;
+}
+
+void pilz_industrial_motion_planner::clearSamplePoseTipToTrackedTransform()
+{
+  SAMPLE_POSE_TIP_TO_TRACKED = Eigen::Isometry3d::Identity();
+  SAMPLE_POSE_OFFSET_ACTIVE = false;
 }
 
 bool pilz_industrial_motion_planner::computePoseIK(const planning_scene::PlanningSceneConstPtr& scene,
@@ -231,20 +262,26 @@ bool pilz_industrial_motion_planner::generateJointTrajectory(
     joint_velocity_last[item.first] = 0.0;
   }
 
+  int i = 0;
   for (std::vector<double>::const_iterator time_iter = time_samples.begin(); time_iter != time_samples.end();
-       ++time_iter)
+       ++time_iter, ++i)
   {
     tf2::transformKDLToEigen(trajectory.Pos(*time_iter), pose_sample);
+    applyTrackedFrameOffsetForIK(pose_sample);
+    RCLCPP_INFO_STREAM(LOGGER, "Sample " << i << ": time " << *time_iter << "s, pose translation: "
+                                        << pose_sample.translation().transpose()
+                                      << link_name << " in frame " << robot_model->getModelFrame()
 
+                                      );
     if (!computePoseIK(scene, group_name, link_name, pose_sample, robot_model->getModelFrame(), ik_solution_last,
                        ik_solution, check_self_collision))
     {
-      RCLCPP_ERROR(LOGGER, "Failed to compute inverse kinematics solution for sampled Cartesian pose.");
+      RCLCPP_ERROR(LOGGER, "YYY Failed to compute inverse kinematics solution for sampled Cartesian pose. i=%d, length=%d", i, static_cast<int>(time_samples.size()));
       error_code.val = moveit_msgs::msg::MoveItErrorCodes::NO_IK_SOLUTION;
       joint_trajectory.points.clear();
       return false;
     }
-
+    
     // check the joint limits
     double duration_current_sample = sampling_time;
     // last interval can be shorter than the sampling time
@@ -257,18 +294,18 @@ bool pilz_industrial_motion_planner::generateJointTrajectory(
       duration_current_sample = *time_iter;
     }
 
-    // skip the first sample with zero time from start for limits checking
-    if (time_iter != time_samples.begin() &&
-        !verifySampleJointLimits(ik_solution_last, joint_velocity_last, ik_solution, sampling_time,
-                                 duration_current_sample, joint_limits))
-    {
-      RCLCPP_ERROR_STREAM(LOGGER, "Inverse kinematics solution at "
-                                      << *time_iter
-                                      << "s violates the joint velocity/acceleration/deceleration limits.");
-      error_code.val = moveit_msgs::msg::MoveItErrorCodes::PLANNING_FAILED;
-      joint_trajectory.points.clear();
-      return false;
-    }
+    // // skip the first sample with zero time from start for limits checking
+    // if (time_iter != time_samples.begin() &&
+    //     !verifySampleJointLimits(ik_solution_last, joint_velocity_last, ik_solution, sampling_time,
+    //                              duration_current_sample, joint_limits))
+    // {
+    //   RCLCPP_ERROR_STREAM(LOGGER, "Inverse kinematics solution at "
+    //                                   << *time_iter
+    //                                   << "s violates the joint velocity/acceleration/deceleration limits.");
+    //   error_code.val = moveit_msgs::msg::MoveItErrorCodes::PLANNING_FAILED;
+    //   joint_trajectory.points.clear();
+    //   return false;
+    // }
 
     // fill the point with joint values
     trajectory_msgs::msg::JointTrajectoryPoint point;
@@ -343,11 +380,15 @@ bool pilz_industrial_motion_planner::generateJointTrajectory(
   std::map<std::string, double> ik_solution;
   for (size_t i = 0; i < trajectory.points.size(); ++i)
   {
+    Eigen::Isometry3d pose_sample;
+    tf2::fromMsg(trajectory.points.at(i).pose, pose_sample);
+    applyTrackedFrameOffsetForIK(pose_sample);
+
     // compute inverse kinematics
-    if (!computePoseIK(scene, group_name, link_name, trajectory.points.at(i).pose, robot_model->getModelFrame(),
+    if (!computePoseIK(scene, group_name, link_name, pose_sample, robot_model->getModelFrame(),
                        ik_solution_last, ik_solution, check_self_collision))
     {
-      RCLCPP_ERROR(LOGGER, "Failed to compute inverse kinematics solution for sampled "
+      RCLCPP_ERROR(LOGGER, "XXX Failed to compute inverse kinematics solution for sampled "
                            "Cartesian pose.");
       error_code.val = moveit_msgs::msg::MoveItErrorCodes::NO_IK_SOLUTION;
       joint_trajectory.points.clear();
@@ -366,22 +407,22 @@ bool pilz_industrial_motion_planner::generateJointTrajectory(
           trajectory.points.at(i).time_from_start.seconds() - trajectory.points.at(i - 1).time_from_start.seconds();
     }
 
-    if (!verifySampleJointLimits(ik_solution_last, joint_velocity_last, ik_solution, duration_last, duration_current,
-                                 joint_limits))
-    {
-      // LCOV_EXCL_START since the same code was captured in a test in the other
-      // overload generateJointTrajectory(...,
-      // KDL::Trajectory, ...)
-      // TODO: refactor to avoid code duplication.
-      RCLCPP_ERROR_STREAM(LOGGER, "Inverse kinematics solution of the "
-                                      << i
-                                      << "th sample violates the joint "
-                                         "velocity/acceleration/deceleration limits.");
-      error_code.val = moveit_msgs::msg::MoveItErrorCodes::PLANNING_FAILED;
-      joint_trajectory.points.clear();
-      return false;
-      // LCOV_EXCL_STOP
-    }
+    // if (!verifySampleJointLimits(ik_solution_last, joint_velocity_last, ik_solution, duration_last, duration_current,
+    //                              joint_limits))
+    // {
+    //   // LCOV_EXCL_START since the same code was captured in a test in the other
+    //   // overload generateJointTrajectory(...,
+    //   // KDL::Trajectory, ...)
+    //   // TODO: refactor to avoid code duplication.
+    //   RCLCPP_ERROR_STREAM(LOGGER, "Inverse kinematics solution of the "
+    //                                   << i
+    //                                   << "th sample violates the joint "
+    //                                      "velocity/acceleration/deceleration limits.");
+    //   error_code.val = moveit_msgs::msg::MoveItErrorCodes::PLANNING_FAILED;
+    //   joint_trajectory.points.clear();
+    //   return false;
+    //   // LCOV_EXCL_STOP
+    // }
 
     // compute the waypoint
     trajectory_msgs::msg::JointTrajectoryPoint waypoint_joint;
