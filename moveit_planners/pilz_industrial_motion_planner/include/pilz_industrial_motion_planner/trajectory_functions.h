@@ -134,7 +134,9 @@ bool generateJointTrajectory(const planning_scene::PlanningSceneConstPtr& scene,
                              const std::string& group_name, const std::string& link_name,
                              const std::map<std::string, double>& initial_joint_position, const double& sampling_time,
                              trajectory_msgs::msg::JointTrajectory& joint_trajectory,
-                             moveit_msgs::msg::MoveItErrorCodes& error_code, bool check_self_collision = false);
+                             moveit_msgs::msg::MoveItErrorCodes& error_code, bool check_self_collision = false,
+                             bool use_tracked_frame = false,
+                             const Eigen::Isometry3d& tip_to_tracked = Eigen::Isometry3d::Identity());
 
 /**
  * @brief Generate joint trajectory from a MultiDOFJointTrajectory
@@ -153,7 +155,9 @@ bool generateJointTrajectory(const planning_scene::PlanningSceneConstPtr& scene,
                              const std::map<std::string, double>& initial_joint_position,
                              const std::map<std::string, double>& initial_joint_velocity,
                              trajectory_msgs::msg::JointTrajectory& joint_trajectory,
-                             moveit_msgs::msg::MoveItErrorCodes& error_code, bool check_self_collision = false);
+                             moveit_msgs::msg::MoveItErrorCodes& error_code, bool check_self_collision = false,
+                             bool use_tracked_frame = false,
+                             const Eigen::Isometry3d& tip_to_tracked = Eigen::Isometry3d::Identity());
 
 /**
  * @brief Determines the sampling time and checks that both trajectroies use the

@@ -49,6 +49,12 @@ CREATE_MOVEIT_ERROR_CODE_EXCEPTION(LinTrajectoryConversionFailure, moveit_msgs::
 
 CREATE_MOVEIT_ERROR_CODE_EXCEPTION(JointNumberMismatch, moveit_msgs::msg::MoveItErrorCodes::INVALID_GOAL_CONSTRAINTS);
 CREATE_MOVEIT_ERROR_CODE_EXCEPTION(LinInverseForGoalIncalculable, moveit_msgs::msg::MoveItErrorCodes::NO_IK_SOLUTION);
+CREATE_MOVEIT_ERROR_CODE_EXCEPTION(LinUnknownPathConstraintName,
+                                   moveit_msgs::msg::MoveItErrorCodes::INVALID_MOTION_PLAN);
+CREATE_MOVEIT_ERROR_CODE_EXCEPTION(LinNoPositionConstraints,
+                                   moveit_msgs::msg::MoveItErrorCodes::INVALID_MOTION_PLAN);
+CREATE_MOVEIT_ERROR_CODE_EXCEPTION(LinNoPrimitivePose,
+                                   moveit_msgs::msg::MoveItErrorCodes::INVALID_MOTION_PLAN);
 
 /**
  * @brief This class implements a linear trajectory generator in Cartesian
@@ -69,6 +75,8 @@ public:
                          const std::string& group_name);
 
 private:
+  void cmdSpecificRequestValidation(const planning_interface::MotionPlanRequest& req) const override;
+
   void extractMotionPlanInfo(const planning_scene::PlanningSceneConstPtr& scene,
                              const planning_interface::MotionPlanRequest& req, MotionPlanInfo& info) const final;
 

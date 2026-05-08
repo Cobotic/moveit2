@@ -49,36 +49,20 @@ namespace
 {
 static const rclcpp::Logger LOGGER = rclcpp::get_logger("moveit.pilz_industrial_motion_planner.trajectory_functions");
 
-thread_local bool SAMPLE_POSE_OFFSET_ACTIVE = false;
-thread_local Eigen::Isometry3d SAMPLE_POSE_TIP_TO_TRACKED = Eigen::Isometry3d::Identity();
-
-void applyTrackedFrameOffsetForIK(Eigen::Isometry3d& pose)
+void applyTrackedFrameOffsetForIK(Eigen::Isometry3d& pose, bool use_tracked_frame,
+                                  const Eigen::Isometry3d& tip_to_tracked)
 {
-  if (!SAMPLE_POSE_OFFSET_ACTIVE)
+  if (!use_tracked_frame)
   {
     return;
   }
 
-  pose = pose * SAMPLE_POSE_TIP_TO_TRACKED.inverse();
+  pose = pose * tip_to_tracked.inverse();
 }
 }
 
 namespace pilz_industrial_motion_planner
 {
-void setSamplePoseTipToTrackedTransform(const Eigen::Isometry3d& tip_to_tracked);
-void clearSamplePoseTipToTrackedTransform();
-}
-
-void pilz_industrial_motion_planner::setSamplePoseTipToTrackedTransform(const Eigen::Isometry3d& tip_to_tracked)
-{
-  SAMPLE_POSE_TIP_TO_TRACKED = tip_to_tracked;
-  SAMPLE_POSE_OFFSET_ACTIVE = true;
-}
-
-void pilz_industrial_motion_planner::clearSamplePoseTipToTrackedTransform()
-{
-  SAMPLE_POSE_TIP_TO_TRACKED = Eigen::Isometry3d::Identity();
-  SAMPLE_POSE_OFFSET_ACTIVE = false;
 }
 
 bool pilz_industrial_motion_planner::computePoseIK(const planning_scene::PlanningSceneConstPtr& scene,
@@ -236,7 +220,7 @@ bool pilz_industrial_motion_planner::generateJointTrajectory(
     const std::string& group_name, const std::string& link_name,
     const std::map<std::string, double>& initial_joint_position, const double& sampling_time,
     trajectory_msgs::msg::JointTrajectory& joint_trajectory, moveit_msgs::msg::MoveItErrorCodes& error_code,
-    bool check_self_collision)
+  bool check_self_collision, bool use_tracked_frame, const Eigen::Isometry3d& tip_to_tracked)
 {
   RCLCPP_DEBUG(LOGGER, "Generate joint trajectory from a Cartesian trajectory.");
 
@@ -267,7 +251,7 @@ bool pilz_industrial_motion_planner::generateJointTrajectory(
        ++time_iter, ++i)
   {
     tf2::transformKDLToEigen(trajectory.Pos(*time_iter), pose_sample);
-    applyTrackedFrameOffsetForIK(pose_sample);
+    applyTrackedFrameOffsetForIK(pose_sample, use_tracked_frame, tip_to_tracked);
     RCLCPP_INFO_STREAM(LOGGER, "Sample " << i << ": time " << *time_iter << "s, pose translation: "
                                         << pose_sample.translation().transpose()
                                       << link_name << " in frame " << robot_model->getModelFrame()
@@ -360,7 +344,7 @@ bool pilz_industrial_motion_planner::generateJointTrajectory(
     const std::string& link_name, const std::map<std::string, double>& initial_joint_position,
     const std::map<std::string, double>& initial_joint_velocity,
     trajectory_msgs::msg::JointTrajectory& joint_trajectory, moveit_msgs::msg::MoveItErrorCodes& error_code,
-    bool check_self_collision)
+  bool check_self_collision, bool use_tracked_frame, const Eigen::Isometry3d& tip_to_tracked)
 {
   RCLCPP_DEBUG(LOGGER, "Generate joint trajectory from a Cartesian trajectory.");
 
@@ -382,7 +366,7 @@ bool pilz_industrial_motion_planner::generateJointTrajectory(
   {
     Eigen::Isometry3d pose_sample;
     tf2::fromMsg(trajectory.points.at(i).pose, pose_sample);
-    applyTrackedFrameOffsetForIK(pose_sample);
+    applyTrackedFrameOffsetForIK(pose_sample, use_tracked_frame, tip_to_tracked);
 
     // compute inverse kinematics
     if (!computePoseIK(scene, group_name, link_name, pose_sample, robot_model->getModelFrame(),

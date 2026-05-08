@@ -127,6 +127,8 @@ protected:
     std::map<std::string, double> start_joint_position;
     std::map<std::string, double> goal_joint_position;
     std::pair<std::string, Eigen::Vector3d> circ_path_point;
+    bool use_tracked_frame{ false };
+    Eigen::Isometry3d tip_to_tracked{ Eigen::Isometry3d::Identity() };
     planning_scene::PlanningSceneConstPtr start_scene;  // scene with updated start state
   };
 
