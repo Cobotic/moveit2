@@ -418,7 +418,21 @@ void ServoCalcs::calculateSingleIteration()
   }
 
   // Print a warning to the user if both are stale
-  if (twist_command_is_stale_ && joint_command_is_stale_)
+  const bool command_watchdog_active = twist_command_is_stale_ && joint_command_is_stale_;
+  static bool command_watchdog_was_active = false;
+  if (command_watchdog_active && !command_watchdog_was_active)
+  {
+    RCLCPP_WARN_STREAM(LOGGER, "Incoming command watchdog activated (incoming_command_timeout="
+                                   << parameters_->incoming_command_timeout
+                                   << "s). No recent twist or joint jog commands.");
+  }
+  else if (!command_watchdog_active && command_watchdog_was_active)
+  {
+    RCLCPP_INFO(LOGGER, "Incoming command watchdog cleared. Resuming servo command processing.");
+  }
+  command_watchdog_was_active = command_watchdog_active;
+
+  if (command_watchdog_active)
   {
     filteredHalt(*joint_trajectory);
   }
@@ -437,7 +451,7 @@ void ServoCalcs::calculateSingleIteration()
     RCLCPP_DEBUG_STREAM_THROTTLE(LOGGER, clock, ROS_LOG_THROTTLE_PERIOD, "All-zero command. Doing nothing.");
   }
   // Skip servoing publication if both types of commands are stale.
-  else if (twist_command_is_stale_ && joint_command_is_stale_)
+  else if (command_watchdog_active)
   {
     ok_to_publish_ = false;
     rclcpp::Clock& clock = *node_->get_clock();
