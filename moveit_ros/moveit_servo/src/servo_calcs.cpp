@@ -428,6 +428,9 @@ void ServoCalcs::calculateSingleIteration()
   }
   else if (!command_watchdog_active && command_watchdog_was_active)
   {
+    // Re-seed smoothing state at the first cycle after watchdog release.
+    // Without this, the first resumed command can be filtered against stale halt history.
+    resetLowPassFilters(original_joint_state_);
     RCLCPP_INFO(LOGGER, "Incoming command watchdog cleared. Resuming servo command processing.");
   }
   command_watchdog_was_active = command_watchdog_active;
